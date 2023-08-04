@@ -21,9 +21,10 @@ func WithMaxRetries(maxRetries int) HttpClientOptions {
 
 func newHttpClientParams(opts ...HttpClientOptions) *HttpClientParams {
 	s := &HttpClientParams{
-		MaxRetryWait: 1000,
+		MaxRetryWait: 10,
 		MaxRetries:   3,
-	}
+	} //default values
+
 	for _, opt := range opts {
 		opt(s)
 	}

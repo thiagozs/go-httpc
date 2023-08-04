@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -206,28 +205,6 @@ func (c *HttpClient) DeleteFormValue(method, key string) {
 	c.Lock()
 	defer c.Unlock()
 	delete(c.forms[strings.ToUpper(method)], key)
-}
-
-// func (c *HttpClient) DisableLogLevel() {
-// 	c.client.Logger = nil
-// }
-
-// func (c *HttpClient) EnableLogLevel() {
-// 	c.client.Logger = log.New(os.Stderr, "", log.LstdFlags)
-// }
-
-func (c *HttpClient) GetFreePort() (int, error) {
-	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
-	if err != nil {
-		return 0, err
-	}
-
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 func (c *HttpClient) GetWithResponse(addrs string) (*http.Response, error) {

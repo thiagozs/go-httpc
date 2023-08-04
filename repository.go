@@ -12,8 +12,6 @@ type HttpClientRepo interface {
 	DeleteWithResponse(addrs string, payload []byte) (*http.Response, error)
 	PostFormWithResponse(addrs string) (*http.Response, error)
 
-	GetFreePort() (int, error)
-
 	SetHeader(method, key, value string)
 	SetFormValue(method, key, value string)
 	SetBasicAuth(method, username, password string)

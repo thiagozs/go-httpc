@@ -68,10 +68,6 @@ func (d HttpClientDriver) EnableLogLevel() {
 	d.client.EnableLogLevel()
 }
 
-func (d HttpClientDriver) GetFreePort() (int, error) {
-	return d.client.GetFreePort()
-}
-
 func (d HttpClientDriver) Delete(addrs string, payload []byte) ([]byte, error) {
 	return d.client.Delete(addrs, payload)
 }
