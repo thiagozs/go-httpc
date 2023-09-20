@@ -212,12 +212,6 @@ func (c *HttpClient) DeleteFormValue(method, key string) {
 	delete(c.forms[strings.ToUpper(method)], key)
 }
 
-func (c *HttpClient) GetHeaders(method string) map[string]string {
-	c.Lock()
-	defer c.Unlock()
-	return c.headers[strings.ToUpper(method)]
-}
-
 func (c *HttpClient) GetFormValue(method string) map[string]string {
 	c.Lock()
 	defer c.Unlock()
@@ -243,4 +237,25 @@ func (c *HttpClient) GetBasicAuth(method string) map[string]string {
 	c.Lock()
 	defer c.Unlock()
 	return c.basicAuth[strings.ToUpper(method)]
+}
+
+func (c *HttpClient) SetPatchHeader(key, value string) {
+	c.Lock()
+	defer c.Unlock()
+	v, ok := c.headers[http.MethodPatch]
+	if ok {
+		_, ook := v[key]
+		if !ook {
+			v[key] = value
+		}
+	} else {
+		c.headers[http.MethodPatch] = make(map[string]string)
+		c.headers[http.MethodPatch][key] = value
+	}
+}
+
+func (c *HttpClient) GetHeaders(method string) map[string]string {
+	c.Lock()
+	defer c.Unlock()
+	return c.headers[strings.ToUpper(method)]
 }

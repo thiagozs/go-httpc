@@ -259,3 +259,20 @@ func TestHttpClient_Head(t *testing.T) {
 		}
 	})
 }
+
+func TestHttpClient_SetPatchHeader(t *testing.T) {
+	client := NewHttpClient()
+
+	key := "Content-Type"
+	value := "application/json"
+	client.SetPatchHeader(key, value)
+
+	headers := client.GetHeaders(http.MethodPatch)
+	if headers == nil {
+		t.Fatalf("expected headers to be initialized, got nil")
+	}
+
+	if headers[key] != value {
+		t.Fatalf("expected header %s to be %s, got %s", key, value, headers[key])
+	}
+}
