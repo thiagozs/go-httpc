@@ -1,8 +1,6 @@
 # go-HTTPC - A Golang HTTP Client (Beta)
 
-The `httpc` package provides a set of functions to perform HTTP requests with retry logic. It also allows setting custom headers, form values, and basic authentication for requests, making it a versatile tool for various web projects. It's easy to use and integrates seamlessly with existing Go applications.
-
-Easy to use.
+The `httpc` package is a robust HTTP client for Go, equipped with features such as retry logic, custom headers, form values, and basic authentication settings. It utilizes a retryable transport structure to manage request retries effectively, enhancing the reliability of HTTP requests in Go applications.
 
 ```golang
 
@@ -25,53 +23,80 @@ Easy to use.
 
 ## Features
 
-### NewHttpClient(opts ...HttpClientOptions) *HttpClient
+### Structs
 
-Creates a new HttpClient instance with the provided options. It sets up a RetryableTransport that will retry requests a specified number of times with a specified wait time between retries.
+- **RetryableTransport**: Manages the retry logic for HTTP requests with configurable retry counts and wait times.
+- **HttpClient**: A thread-safe HTTP client with methods to perform various HTTP requests and manage request headers, form values, and basic authentication settings.
 
-### Get(addrs string) ([]byte, error)
+### Methods
 
-Sends a GET request to the specified address and returns the response body as a byte slice. If the server responds with a 500 status code, it returns an error.
+#### NewHttpClient(opts ...HttpClientOptions) *HttpClient
 
-### Post(addrs string, payload []byte) ([]byte, error)
+Initializes a new HttpClient instance with specified options.
 
-Sends a POST request to the specified address with the provided payload and returns the response body as a byte slice. If the server responds with a 500 status code, it returns an error.
+#### Get(addrs string) ([]byte, error)
 
-### Delete(addrs string, payload []byte) ([]byte, error)
+Sends a GET request to the specified address and returns the response body as a byte slice.
 
-Sends a DELETE request to the specified address with the provided payload and returns the response body as a byte slice. If the server responds with a 500 status code, it returns an error.
+#### Post(addrs string, payload []byte) ([]byte, error)
 
-### SetHeader(method, key, value string)
+Sends a POST request to the specified address with the provided payload and returns the response body as a byte slice.
 
-Sets a header for a specified HTTP method. If the header already exists, it updates the value.
+#### Put(addrs string, payload []byte) ([]byte, error)
 
-### DeleteHeader(method, key string)
+Sends a PUT request to the specified address with the provided payload and returns the response body as a byte slice.
+
+#### Delete(addrs string, payload []byte) ([]byte, error)
+
+Sends a DELETE request to the specified address with the provided payload and returns the response body as a byte slice.
+
+#### Patch(addrs string, payload []byte) ([]byte, error)
+
+Sends a PATCH request to the specified address with the provided payload and returns the response body as a byte slice.
+
+#### Head(addrs string) (*http.Response, error)
+
+Sends a HEAD request to the specified address and returns the full http.Response object.
+
+#### SetHeader(method, key, value string)
+
+Sets or updates a header for a specified HTTP method.
+
+#### DeleteHeader(method, key string)
 
 Deletes a header for a specified HTTP method.
 
-### SetFormValue(method, key, value string)
+#### SetFormValue(method, key, value string)
 
-Sets a form value for a specified HTTP method. If the form value already exists, it updates the value.
+Sets or updates a form value for a specified HTTP method.
 
-### DeleteFormValue(method, key string)
+#### DeleteFormValue(method, key string)
 
 Deletes a form value for a specified HTTP method.
 
-### GetHeaders(method string) map[string]string
+#### GetFormValue(method string) map[string]string
 
-Returns all headers set for a specified HTTP method.
+Retrieves all form values set for a specified HTTP method.
 
-### GetFormValue(method string) map[string]string
-
-Returns all form values set for a specified HTTP method.
-
-### SetBasicAuth(method, username, password string)
+#### SetBasicAuth(method, username, password string)
 
 Sets the Basic Authentication for a specified HTTP method.
 
-### GetBasicAuth(method string) map[string]string
+#### GetBasicAuth(method string) map[string]string
 
-Returns the Basic Authentication set for a specified HTTP method.
+Retrieves the Basic Authentication set for a specified HTTP method.
+
+#### SetPatchHeader(key, value string)
+
+Sets or updates a header specifically for PATCH requests.
+
+#### GetHeaders(method string) map[string]string
+
+Retrieves all headers set for a specified HTTP method.
+
+## Usage
+
+Refer to the source code for detailed usage and examples.
 
 ## Versioning and License
 
