@@ -7,18 +7,6 @@ type HttpClientParams struct {
 
 type HttpClientOptions func(*HttpClientParams)
 
-func WithMaxRetryWait(maxRetryWait int) HttpClientOptions {
-	return func(s *HttpClientParams) {
-		s.MaxRetryWait = maxRetryWait
-	}
-}
-
-func WithMaxRetries(maxRetries int) HttpClientOptions {
-	return func(s *HttpClientParams) {
-		s.MaxRetries = maxRetries
-	}
-}
-
 func newHttpClientParams(opts ...HttpClientOptions) *HttpClientParams {
 	s := &HttpClientParams{
 		MaxRetryWait: 10,
@@ -29,6 +17,18 @@ func newHttpClientParams(opts ...HttpClientOptions) *HttpClientParams {
 		opt(s)
 	}
 	return s
+}
+
+func WithMaxRetryWait(maxRetryWait int) HttpClientOptions {
+	return func(s *HttpClientParams) {
+		s.MaxRetryWait = maxRetryWait
+	}
+}
+
+func WithMaxRetries(maxRetries int) HttpClientOptions {
+	return func(s *HttpClientParams) {
+		s.MaxRetries = maxRetries
+	}
 }
 
 // getters and setters -----

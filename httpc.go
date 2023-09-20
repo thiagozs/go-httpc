@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -29,8 +30,11 @@ func (t *RetryableTransport) RoundTrip(req *http.Request) (*http.Response, error
 	for i := 0; i < t.Retries; i++ {
 		resp, err = t.Transport.RoundTrip(req)
 		if err != nil {
-			time.Sleep(time.Second * time.Duration(t.WaitMaxSec))
-			continue
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				time.Sleep(time.Second * time.Duration(t.WaitMaxSec))
+				continue
+			}
+			return nil, err
 		}
 		break
 	}
@@ -46,7 +50,7 @@ type HttpClient struct {
 	retryWaitMax int
 	headers      map[string]map[string]string
 	forms        map[string]map[string]string
-	setBasicAuth map[string]map[string]string
+	basicAuth    map[string]map[string]string
 	params       *HttpClientParams
 }
 
@@ -63,106 +67,107 @@ func NewHttpClient(opts ...HttpClientOptions) *HttpClient {
 	}
 
 	return &HttpClient{
-		client:       client,
-		headers:      make(map[string]map[string]string),
-		forms:        make(map[string]map[string]string),
-		setBasicAuth: make(map[string]map[string]string),
-		params:       params,
+		client:    client,
+		headers:   make(map[string]map[string]string),
+		forms:     make(map[string]map[string]string),
+		basicAuth: make(map[string]map[string]string),
+		params:    params,
 	}
+}
+
+func (c *HttpClient) setHeaders(method string, req *http.Request) {
+	c.Lock()
+	defer c.Unlock()
+	headers, exists := c.headers[strings.ToUpper(method)]
+	if exists {
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+	}
+}
+
+func (c *HttpClient) setBasicAuth(method string, req *http.Request) {
+	c.Lock()
+	defer c.Unlock()
+	auth, exists := c.basicAuth[strings.ToUpper(method)]
+	if exists {
+		for username, password := range auth {
+			req.SetBasicAuth(username, password)
+		}
+	}
+}
+
+func (c *HttpClient) doRequest(method, addrs string, payload []byte) ([]byte, error) {
+	formValues := c.GetFormValue(method)
+	var req *http.Request
+	var err error
+
+	if len(formValues) > 0 {
+		form := url.Values{}
+		for key, value := range formValues {
+			form.Add(key, value)
+		}
+		req, err = http.NewRequest(method, addrs, strings.NewReader(form.Encode()))
+		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	} else {
+		req, err = http.NewRequest(method, addrs, bytes.NewBuffer(payload))
+		if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
+			req.Header.Add("Content-Type", "application/json")
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("creating request failed: %w", err)
+	}
+
+	c.setHeaders(method, req)
+	c.setBasicAuth(method, req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf("server error: %v", resp.StatusCode)
+	} else if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("client error: %v", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
 }
 
 func (c *HttpClient) Get(addrs string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, addrs, nil)
-	if err != nil {
-		return []byte{}, err
-	}
-	if len(c.headers[http.MethodGet]) > 0 {
-		for k, v := range c.headers[http.MethodGet] {
-			req.Header.Set(k, v)
-		}
-	}
-	if len(c.setBasicAuth[http.MethodPost]) > 0 {
-		auth := c.setBasicAuth[http.MethodPost]
-		var user, pass string
-		for k, v := range auth {
-			user = k
-			pass = v
-		}
-		req.SetBasicAuth(user, pass)
-	}
-
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return []byte{}, err
-	}
-	defer rr.Body.Close()
-
-	if rr.StatusCode >= 500 {
-		return nil, fmt.Errorf("server error: %v", rr.StatusCode)
-	}
-
-	return io.ReadAll(rr.Body)
+	return c.doRequest(http.MethodGet, addrs, nil)
 }
 
 func (c *HttpClient) Post(addrs string, payload []byte) ([]byte, error) {
+	return c.doRequest(http.MethodPost, addrs, payload)
+}
 
-	req, err := http.NewRequest(http.MethodPost, addrs, bytes.NewBuffer(payload))
-	if err != nil {
-		return []byte{}, err
-	}
-	if len(c.headers[http.MethodPost]) > 0 {
-		for k, v := range c.headers[http.MethodPost] {
-			req.Header.Set(k, v)
-		}
-	}
-	if len(c.setBasicAuth[http.MethodPost]) > 0 {
-		auth := c.setBasicAuth[http.MethodPost]
-		var user, pass string
-		for k, v := range auth {
-			user = k
-			pass = v
-		}
-		req.SetBasicAuth(user, pass)
-	}
-
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return []byte{}, err
-	}
-
-	defer rr.Body.Close()
-
-	if rr.StatusCode >= 500 {
-		return nil, fmt.Errorf("server error: %v", rr.StatusCode)
-	}
-
-	return io.ReadAll(rr.Body)
+func (c *HttpClient) Put(addrs string, payload []byte) ([]byte, error) {
+	return c.doRequest(http.MethodPut, addrs, payload)
 }
 
 func (c *HttpClient) Delete(addrs string, payload []byte) ([]byte, error) {
+	return c.doRequest(http.MethodDelete, addrs, payload)
+}
 
-	req, err := http.NewRequest(http.MethodDelete, addrs, bytes.NewBuffer(payload))
+func (c *HttpClient) Patch(addrs string, payload []byte) ([]byte, error) {
+	return c.doRequest(http.MethodPatch, addrs, payload)
+}
+
+func (c *HttpClient) Head(addrs string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodHead, addrs, nil)
 	if err != nil {
-		return []byte{}, err
-	}
-	if len(c.headers[http.MethodDelete]) > 0 {
-		for k, v := range c.headers[http.MethodDelete] {
-			req.Header.Set(k, v)
-		}
+		return nil, fmt.Errorf("creating request failed: %w", err)
 	}
 
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return []byte{}, err
-	}
+	c.setHeaders(http.MethodHead, req)
+	c.setBasicAuth(http.MethodHead, req)
 
-	defer rr.Body.Close()
-
-	if rr.StatusCode >= 500 {
-		return nil, fmt.Errorf("server error: %v", rr.StatusCode)
-	}
-
-	return io.ReadAll(rr.Body)
+	return c.client.Do(req)
 }
 
 func (c *HttpClient) SetHeader(method, key, value string) {
@@ -207,128 +212,6 @@ func (c *HttpClient) DeleteFormValue(method, key string) {
 	delete(c.forms[strings.ToUpper(method)], key)
 }
 
-func (c *HttpClient) GetWithResponse(addrs string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, addrs, nil)
-	if err != nil {
-		return &http.Response{}, err
-	}
-	if len(c.headers[http.MethodGet]) > 0 {
-		for k, v := range c.headers[http.MethodGet] {
-			req.Header.Set(k, v)
-		}
-	}
-	if len(c.setBasicAuth[http.MethodPost]) > 0 {
-		auth := c.setBasicAuth[http.MethodPost]
-		var user, pass string
-		for k, v := range auth {
-			user = k
-			pass = v
-		}
-		req.SetBasicAuth(user, pass)
-	}
-
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return &http.Response{}, err
-	}
-	return rr, nil
-}
-
-func (c *HttpClient) PostWithResponse(addrs string, payload []byte) (*http.Response, error) {
-
-	req, err := http.NewRequest(http.MethodPost, addrs, bytes.NewBuffer(payload))
-	if err != nil {
-		return &http.Response{}, err
-	}
-	if len(c.headers[http.MethodPost]) > 0 {
-		for k, v := range c.headers[http.MethodPost] {
-			req.Header.Set(k, v)
-		}
-	}
-
-	if len(c.setBasicAuth[http.MethodPost]) > 0 {
-		auth := c.setBasicAuth[http.MethodPost]
-		var user, pass string
-		for k, v := range auth {
-			user = k
-			pass = v
-		}
-		req.SetBasicAuth(user, pass)
-	}
-
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return &http.Response{}, err
-	}
-
-	return rr, nil
-}
-
-func (c *HttpClient) DeleteWithResponse(addrs string, payload []byte) (*http.Response, error) {
-
-	req, err := http.NewRequest(http.MethodDelete, addrs, bytes.NewBuffer(payload))
-	if err != nil {
-		return &http.Response{}, err
-	}
-	if len(c.headers[http.MethodDelete]) > 0 {
-		for k, v := range c.headers[http.MethodDelete] {
-			req.Header.Set(k, v)
-		}
-	}
-	if len(c.setBasicAuth[http.MethodPost]) > 0 {
-		auth := c.setBasicAuth[http.MethodPost]
-		var user, pass string
-		for k, v := range auth {
-			user = k
-			pass = v
-		}
-		req.SetBasicAuth(user, pass)
-	}
-
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return &http.Response{}, err
-	}
-
-	return rr, nil
-}
-
-func (c *HttpClient) PostFormWithResponse(addrs string) (*http.Response, error) {
-	forms := url.Values{}
-	if len(c.forms[http.MethodPost]) > 0 {
-		for k, v := range c.forms[http.MethodPost] {
-			forms.Add(k, v)
-		}
-	}
-
-	req, err := http.NewRequest(http.MethodPost, addrs, strings.NewReader(forms.Encode()))
-	if err != nil {
-		return &http.Response{}, err
-	}
-	if len(c.headers[http.MethodPost]) > 0 {
-		for k, v := range c.headers[http.MethodPost] {
-			req.Header.Set(k, v)
-		}
-	}
-	if len(c.setBasicAuth[http.MethodPost]) > 0 {
-		auth := c.setBasicAuth[http.MethodPost]
-		var user, pass string
-		for k, v := range auth {
-			user = k
-			pass = v
-		}
-		req.SetBasicAuth(user, pass)
-	}
-
-	rr, err := c.client.Do(req)
-	if err != nil {
-		return &http.Response{}, err
-	}
-
-	return rr, nil
-
-}
-
 func (c *HttpClient) GetHeaders(method string) map[string]string {
 	c.Lock()
 	defer c.Unlock()
@@ -344,20 +227,20 @@ func (c *HttpClient) GetFormValue(method string) map[string]string {
 func (c *HttpClient) SetBasicAuth(method, username, password string) {
 	c.Lock()
 	defer c.Unlock()
-	v, ok := c.setBasicAuth[strings.ToUpper(method)]
+	v, ok := c.basicAuth[strings.ToUpper(method)]
 	if ok {
 		_, ook := v[username]
 		if !ook {
 			v[username] = password
 		}
 	} else {
-		c.setBasicAuth[strings.ToUpper(method)] = make(map[string]string)
-		c.setBasicAuth[strings.ToUpper(method)][username] = password
+		c.basicAuth[strings.ToUpper(method)] = make(map[string]string)
+		c.basicAuth[strings.ToUpper(method)][username] = password
 	}
 }
 
 func (c *HttpClient) GetBasicAuth(method string) map[string]string {
 	c.Lock()
 	defer c.Unlock()
-	return c.setBasicAuth[strings.ToUpper(method)]
+	return c.basicAuth[strings.ToUpper(method)]
 }
