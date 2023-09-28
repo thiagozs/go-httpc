@@ -129,10 +129,9 @@ func (c *HttpClient) doRequest(method, addrs string, payload []byte) ([]byte, er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 500 {
-		return nil, fmt.Errorf("server error: %v", resp.StatusCode)
-	} else if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("client error: %v", resp.StatusCode)
+	if resp.StatusCode >= 500 || resp.StatusCode >= 400 {
+		bts, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server error: status(%d) %s", resp.StatusCode, string(bts))
 	}
 
 	return io.ReadAll(resp.Body)
