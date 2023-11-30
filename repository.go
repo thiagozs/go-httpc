@@ -18,8 +18,9 @@ type HttpClientRepo interface {
 	DeleteHeader(method, key string)
 	SetFormValue(method, key, value string)
 	DeleteFormValue(method, key string)
-	GetHeaders(method string) map[string]string
 	GetFormValue(method string) map[string]string
 	SetBasicAuth(method, username, password string)
 	GetBasicAuth(method string) map[string]string
+	SetPatchHeader(key, value string)
+	GetHeaders(method string) map[string]string
 }
