@@ -172,16 +172,12 @@ func (c *HttpClient) Head(addrs string) (*http.Response, error) {
 func (c *HttpClient) SetHeader(method, key, value string) {
 	c.Lock()
 	defer c.Unlock()
-	v, ok := c.headers[strings.ToUpper(method)]
-	if ok {
-		_, ook := v[key]
-		if !ook {
-			v[key] = value
-		}
-	} else {
-		c.headers[strings.ToUpper(method)] = make(map[string]string)
-		c.headers[strings.ToUpper(method)][key] = value
+	method = strings.ToUpper(method)
+
+	if _, exists := c.headers[method]; !exists {
+		c.headers[method] = make(map[string]string)
 	}
+	c.headers[method][key] = value
 }
 
 func (c *HttpClient) DeleteHeader(method, key string) {
@@ -193,16 +189,12 @@ func (c *HttpClient) DeleteHeader(method, key string) {
 func (c *HttpClient) SetFormValue(method, key, value string) {
 	c.Lock()
 	defer c.Unlock()
-	v, ok := c.forms[strings.ToUpper(method)]
-	if ok {
-		_, ook := v[key]
-		if !ook {
-			v[key] = value
-		}
-	} else {
-		c.forms[strings.ToUpper(method)] = make(map[string]string)
-		c.forms[strings.ToUpper(method)][key] = value
+	method = strings.ToUpper(method)
+
+	if _, exists := c.forms[method]; !exists {
+		c.forms[method] = make(map[string]string)
 	}
+	c.forms[method][key] = value
 }
 
 func (c *HttpClient) DeleteFormValue(method, key string) {
@@ -220,16 +212,12 @@ func (c *HttpClient) GetFormValue(method string) map[string]string {
 func (c *HttpClient) SetBasicAuth(method, username, password string) {
 	c.Lock()
 	defer c.Unlock()
-	v, ok := c.basicAuth[strings.ToUpper(method)]
-	if ok {
-		_, ook := v[username]
-		if !ook {
-			v[username] = password
-		}
-	} else {
-		c.basicAuth[strings.ToUpper(method)] = make(map[string]string)
-		c.basicAuth[strings.ToUpper(method)][username] = password
+	method = strings.ToUpper(method)
+
+	if _, exists := c.basicAuth[method]; !exists {
+		c.basicAuth[method] = make(map[string]string)
 	}
+	c.basicAuth[method][username] = password
 }
 
 func (c *HttpClient) GetBasicAuth(method string) map[string]string {
@@ -241,16 +229,12 @@ func (c *HttpClient) GetBasicAuth(method string) map[string]string {
 func (c *HttpClient) SetPatchHeader(key, value string) {
 	c.Lock()
 	defer c.Unlock()
-	v, ok := c.headers[http.MethodPatch]
-	if ok {
-		_, ook := v[key]
-		if !ook {
-			v[key] = value
-		}
-	} else {
+
+	if _, exists := c.headers[http.MethodPatch]; !exists {
 		c.headers[http.MethodPatch] = make(map[string]string)
-		c.headers[http.MethodPatch][key] = value
 	}
+
+	c.headers[http.MethodPatch][key] = value
 }
 
 func (c *HttpClient) GetHeaders(method string) map[string]string {

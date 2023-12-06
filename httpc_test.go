@@ -4,7 +4,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHttpClient_Get(t *testing.T) {
@@ -275,4 +278,98 @@ func TestHttpClient_SetPatchHeader(t *testing.T) {
 	if headers[key] != value {
 		t.Fatalf("expected header %s to be %s, got %s", key, value, headers[key])
 	}
+}
+
+func TestHttpClient_FormPostValueOverride(t *testing.T) {
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := r.ParseForm()
+		assert.NoError(t, err)
+
+		formValues := url.Values{}
+		for key, values := range r.PostForm {
+			for _, value := range values {
+				formValues.Add(key, value)
+			}
+		}
+		w.Write([]byte(formValues.Encode()))
+	}))
+	defer ts.Close()
+
+	client := NewHttpClient()
+	// Set initial form value
+	client.SetFormValue(http.MethodPost, "key", "initialValue")
+	// Override form value
+	client.SetFormValue(http.MethodPost, "key", "updatedValue")
+
+	resp, err := client.Post(ts.URL, nil)
+	assert.NoError(t, err)
+
+	responseFormValues, err := url.ParseQuery(string(resp))
+	assert.NoError(t, err)
+	assert.Equal(t, "updatedValue", responseFormValues.Get("key"))
+}
+
+func TestHttpClient_HeaderValueOverride(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaderValue := r.Header.Get("Test-Header")
+		w.Write([]byte(receivedHeaderValue))
+	}))
+	defer ts.Close()
+
+	client := NewHttpClient()
+	// Set initial header value
+	client.SetHeader(http.MethodGet, "Test-Header", "initialValue")
+	// Override header value
+	client.SetHeader(http.MethodGet, "Test-Header", "updatedValue")
+
+	resp, err := client.Get(ts.URL)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "updatedValue", string(resp))
+}
+
+func TestHttpClient_BasicAuthOverride(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(user + ":" + pass))
+	}))
+	defer ts.Close()
+
+	client := NewHttpClient()
+	// Set initial basic auth credentials
+	client.SetBasicAuth(http.MethodGet, "initialUser", "initialPass")
+	// Override basic auth credentials
+	client.SetBasicAuth(http.MethodGet, "updatedUser", "updatedPass")
+
+	resp, err := client.Get(ts.URL)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "updatedUser:updatedPass", string(resp))
+}
+
+func TestHttpClient_PatchHeaderOverride(t *testing.T) {
+	// Create a test server that echoes back the received header value
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaderValue := r.Header.Get("Test-Header")
+		w.Write([]byte(receivedHeaderValue))
+	}))
+	defer ts.Close()
+
+	client := NewHttpClient()
+	// Set initial header value
+	client.SetPatchHeader("Test-Header", "initialValue")
+	// Override header value
+	client.SetPatchHeader("Test-Header", "updatedValue")
+
+	// Make a PATCH request
+	resp, err := client.Patch(ts.URL, nil)
+	assert.NoError(t, err)
+
+	// Check if the header value in the response is the updated value
+	assert.Equal(t, "updatedValue", string(resp))
 }
