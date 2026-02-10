@@ -1,102 +1,94 @@
 # go-HTTPC - A Golang HTTP Client (Beta)
 
-The `httpc` package is a robust HTTP client for Go, equipped with features such as retry logic, custom headers, form values, and basic authentication settings. It utilizes a retryable transport structure to manage request retries effectively, enhancing the reliability of HTTP requests in Go applications.
+`httpc` is a small, thread-safe HTTP client wrapper for Go focused on practical features you typically reimplement in every service. It offers retries, per-method settings, and convenient helpers for headers, form bodies, basic auth, and request hooks while still returning the underlying `*http.Response` for full access to status/headers.
+
+Key behaviors:
+
+- Returns `(*http.Response, []byte, error)` for all methods, so you get headers/status and the body in one call.
+- Context-aware variants are available for all HTTP verbs.
+- Retries on timeouts with configurable max wait and retries per method.
+- Optional retry by status code (e.g., 500/502).
+- Form values are encoded as `application/x-www-form-urlencoded` when set for a method.
+- JSON `Content-Type` is set automatically for POST/PUT/PATCH when payload is non-empty.
+- Basic auth can be configured per method.
+- Request hooks let you mutate the request before sending (e.g., add headers, tracing IDs).
 
 ```golang
+opts := []httpc.HttpClientOptions{
+	httpc.WithMaxRetries(3),
+	httpc.WithMaxRetryWait(3), // seconds
+}
 
-    opts := []httpc.HttpClientOptions{
-    httpc.WithMaxRetries(3),
-    httpc.WithMaxRetryWait(3), //seconds
-    }
+client := httpc.NewHttpClient(opts...)
 
-    client := httpc.NewHttpClient(opts...)
+URL := "https://thiagozs.com"
 
-    URL : = "https://thiagozs.com"
-
-    resp, err := client.Get(URL)
-    if err != nil {
-        fmt.Printf("error: %+v\n",err)
-        return
-    }
-
+resp, body, err := client.Get(URL)
+if err != nil {
+	fmt.Printf("error: %+v\n", err)
+	return
+}
+fmt.Println(resp.StatusCode, string(body))
 ```
-
-## Features
-
-### Structs
-
-- **RetryableTransport**: Manages the retry logic for HTTP requests with configurable retry counts and wait times.
-- **HttpClient**: A thread-safe HTTP client with methods to perform various HTTP requests and manage request headers, form values, and basic authentication settings.
-
-### Methods
-
-#### NewHttpClient(opts ...HttpClientOptions) *HttpClient
-
-Initializes a new HttpClient instance with specified options.
-
-#### Get(addrs string) ([]byte, error)
-
-Sends a GET request to the specified address and returns the response body as a byte slice.
-
-#### Post(addrs string, payload []byte) ([]byte, error)
-
-Sends a POST request to the specified address with the provided payload and returns the response body as a byte slice.
-
-#### Put(addrs string, payload []byte) ([]byte, error)
-
-Sends a PUT request to the specified address with the provided payload and returns the response body as a byte slice.
-
-#### Delete(addrs string, payload []byte) ([]byte, error)
-
-Sends a DELETE request to the specified address with the provided payload and returns the response body as a byte slice.
-
-#### Patch(addrs string, payload []byte) ([]byte, error)
-
-Sends a PATCH request to the specified address with the provided payload and returns the response body as a byte slice.
-
-#### Head(addrs string) (*http.Response, error)
-
-Sends a HEAD request to the specified address and returns the full http.Response object.
-
-#### SetHeader(method, key, value string)
-
-Sets or updates a header for a specified HTTP method.
-
-#### DeleteHeader(method, key string)
-
-Deletes a header for a specified HTTP method.
-
-#### SetFormValue(method, key, value string)
-
-Sets or updates a form value for a specified HTTP method.
-
-#### DeleteFormValue(method, key string)
-
-Deletes a form value for a specified HTTP method.
-
-#### GetFormValue(method string) map[string]string
-
-Retrieves all form values set for a specified HTTP method.
-
-#### SetBasicAuth(method, username, password string)
-
-Sets the Basic Authentication for a specified HTTP method.
-
-#### GetBasicAuth(method string) map[string]string
-
-Retrieves the Basic Authentication set for a specified HTTP method.
-
-#### SetPatchHeader(key, value string)
-
-Sets or updates a header specifically for PATCH requests.
-
-#### GetHeaders(method string) map[string]string
-
-Retrieves all headers set for a specified HTTP method.
 
 ## Usage
 
-Refer to the source code for detailed usage and examples.
+### With context and reading headers
+
+```golang
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
+resp, body, err := client.GetWithContext(ctx, URL)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(resp.StatusCode, resp.Header.Get("Content-Type"))
+fmt.Println(string(body))
+```
+
+### With request hook
+
+```golang
+client := httpc.NewHttpClient(httpc.WithRequestHook(func(req *http.Request) {
+	req.Header.Set("X-Request-ID", "abc-123")
+}))
+
+resp, body, err := client.Get(URL)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(resp.StatusCode, string(body))
+```
+
+### Head with context
+
+```golang
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
+resp, body, err := client.HeadWithContext(ctx, URL)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(resp.StatusCode, len(body))
+```
+
+### Retry by status code
+
+```golang
+client := httpc.NewHttpClient(
+	httpc.WithMethodRetries(http.MethodGet, 3),
+	httpc.WithRetryStatusCodes(http.StatusInternalServerError, http.StatusBadGateway),
+	httpc.WithMaxRetryWait(1),
+)
+
+resp, body, err := client.Get(URL)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(resp.StatusCode, string(body))
+```
 
 ## Versioning and License
 

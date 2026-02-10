@@ -2,6 +2,8 @@ package httpc
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,42 +14,9 @@ import (
 	"time"
 )
 
-var (
-	UA_KEY = "User-Agent"
-	UA_VAL = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.69 Safari/537.36"
-)
-
-type RetryableTransport struct {
-	Transport  http.RoundTripper
-	Retries    int
-	WaitMaxSec int
-}
-
-func (t *RetryableTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	var resp *http.Response
-	var err error
-
-	for i := 0; i < t.Retries; i++ {
-		resp, err = t.Transport.RoundTrip(req)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				time.Sleep(time.Second * time.Duration(t.WaitMaxSec))
-				continue
-			}
-			return nil, err
-		}
-		break
-	}
-
-	return resp, err
-}
-
 type HttpClient struct {
-	sync.Mutex
+	sync.RWMutex
 	client       *http.Client
-	maxRetry     int
-	retryWaitMin int
-	retryWaitMax int
 	headers      map[string]map[string]string
 	forms        map[string]map[string]string
 	basicAuth    map[string]map[string]string
@@ -58,13 +27,7 @@ func NewHttpClient(opts ...HttpClientOptions) *HttpClient {
 
 	params := newHttpClientParams(opts...)
 
-	client := &http.Client{
-		Transport: &RetryableTransport{
-			Transport:  http.DefaultTransport,
-			Retries:    params.GetMaxRetries(),
-			WaitMaxSec: params.GetMaxRetryWait(),
-		},
-	}
+	client := &http.Client{}
 
 	return &HttpClient{
 		client:    client,
@@ -76,9 +39,9 @@ func NewHttpClient(opts ...HttpClientOptions) *HttpClient {
 }
 
 func (c *HttpClient) setHeaders(method string, req *http.Request) {
-	c.Lock()
-	defer c.Unlock()
-	headers, exists := c.headers[strings.ToUpper(method)]
+	c.RLock()
+	defer c.RUnlock()
+	headers, exists := c.headers[methodKey(method)]
 	if exists {
 		for k, v := range headers {
 			req.Header.Set(k, v)
@@ -87,9 +50,9 @@ func (c *HttpClient) setHeaders(method string, req *http.Request) {
 }
 
 func (c *HttpClient) setBasicAuth(method string, req *http.Request) {
-	c.Lock()
-	defer c.Unlock()
-	auth, exists := c.basicAuth[strings.ToUpper(method)]
+	c.RLock()
+	defer c.RUnlock()
+	auth, exists := c.basicAuth[methodKey(method)]
 	if exists {
 		for username, password := range auth {
 			req.SetBasicAuth(username, password)
@@ -97,82 +60,93 @@ func (c *HttpClient) setBasicAuth(method string, req *http.Request) {
 	}
 }
 
-func (c *HttpClient) doRequest(method, addrs string, payload []byte) ([]byte, error) {
-	formValues := c.GetFormValue(method)
-	var req *http.Request
-	var err error
+func (c *HttpClient) doRequest(method, addrs string, payload []byte) (*http.Response, []byte, error) {
+	return c.doRequestWithContext(context.Background(), method, addrs, payload)
+}
 
+func (c *HttpClient) doRequestWithContext(ctx context.Context, method, addrs string, payload []byte) (*http.Response, []byte, error) {
+	resp, body, err := c.doRequestWithContextRaw(ctx, method, addrs, payload, true)
+	return resp, body, err
+}
+
+func (c *HttpClient) buildRequest(ctx context.Context, method, addrs string, payload []byte) (*http.Request, error) {
+	formValues := c.formValuesFor(method)
 	if len(formValues) > 0 {
 		form := url.Values{}
 		for key, value := range formValues {
 			form.Add(key, value)
 		}
-		req, err = http.NewRequest(method, addrs, strings.NewReader(form.Encode()))
-		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	} else {
-		req, err = http.NewRequest(method, addrs, bytes.NewBuffer(payload))
-		if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
-			req.Header.Add("Content-Type", "application/json")
+		req, err := http.NewRequestWithContext(ctx, method, addrs, strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
 		}
+		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+		return req, nil
 	}
 
+	req, err := http.NewRequestWithContext(ctx, method, addrs, bytes.NewBuffer(payload))
 	if err != nil {
-		return nil, fmt.Errorf("creating request failed: %w", err)
+		return nil, err
 	}
-
-	c.setHeaders(method, req)
-	c.setBasicAuth(method, req)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	if len(payload) > 0 && (method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch) {
+		req.Header.Add("Content-Type", "application/json")
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 500 || resp.StatusCode >= 400 {
-		bts, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server error: status(%d) %s", resp.StatusCode, string(bts))
-	}
-
-	return io.ReadAll(resp.Body)
+	return req, nil
 }
 
-func (c *HttpClient) Get(addrs string) ([]byte, error) {
+func (c *HttpClient) Get(addrs string) (*http.Response, []byte, error) {
 	return c.doRequest(http.MethodGet, addrs, nil)
 }
 
-func (c *HttpClient) Post(addrs string, payload []byte) ([]byte, error) {
+func (c *HttpClient) Post(addrs string, payload []byte) (*http.Response, []byte, error) {
 	return c.doRequest(http.MethodPost, addrs, payload)
 }
 
-func (c *HttpClient) Put(addrs string, payload []byte) ([]byte, error) {
+func (c *HttpClient) Put(addrs string, payload []byte) (*http.Response, []byte, error) {
 	return c.doRequest(http.MethodPut, addrs, payload)
 }
 
-func (c *HttpClient) Delete(addrs string, payload []byte) ([]byte, error) {
+func (c *HttpClient) Delete(addrs string, payload []byte) (*http.Response, []byte, error) {
 	return c.doRequest(http.MethodDelete, addrs, payload)
 }
 
-func (c *HttpClient) Patch(addrs string, payload []byte) ([]byte, error) {
+func (c *HttpClient) Patch(addrs string, payload []byte) (*http.Response, []byte, error) {
 	return c.doRequest(http.MethodPatch, addrs, payload)
 }
 
-func (c *HttpClient) Head(addrs string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodHead, addrs, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request failed: %w", err)
-	}
+func (c *HttpClient) Head(addrs string) (*http.Response, []byte, error) {
+	return c.HeadWithContext(context.Background(), addrs)
+}
 
-	c.setHeaders(http.MethodHead, req)
-	c.setBasicAuth(http.MethodHead, req)
+func (c *HttpClient) GetWithContext(ctx context.Context, addrs string) (*http.Response, []byte, error) {
+	return c.doRequestWithContext(ctx, http.MethodGet, addrs, nil)
+}
 
-	return c.client.Do(req)
+func (c *HttpClient) PostWithContext(ctx context.Context, addrs string, payload []byte) (*http.Response, []byte, error) {
+	return c.doRequestWithContext(ctx, http.MethodPost, addrs, payload)
+}
+
+func (c *HttpClient) PutWithContext(ctx context.Context, addrs string, payload []byte) (*http.Response, []byte, error) {
+	return c.doRequestWithContext(ctx, http.MethodPut, addrs, payload)
+}
+
+func (c *HttpClient) DeleteWithContext(ctx context.Context, addrs string, payload []byte) (*http.Response, []byte, error) {
+	return c.doRequestWithContext(ctx, http.MethodDelete, addrs, payload)
+}
+
+func (c *HttpClient) PatchWithContext(ctx context.Context, addrs string, payload []byte) (*http.Response, []byte, error) {
+	return c.doRequestWithContext(ctx, http.MethodPatch, addrs, payload)
+}
+
+func (c *HttpClient) HeadWithContext(ctx context.Context, addrs string) (*http.Response, []byte, error) {
+	resp, body, err := c.doRequestWithContextRaw(ctx, http.MethodHead, addrs, nil, true)
+	return resp, body, err
 }
 
 func (c *HttpClient) SetHeader(method, key, value string) {
 	c.Lock()
 	defer c.Unlock()
-	method = strings.ToUpper(method)
+	method = methodKey(method)
 
 	if _, exists := c.headers[method]; !exists {
 		c.headers[method] = make(map[string]string)
@@ -183,13 +157,13 @@ func (c *HttpClient) SetHeader(method, key, value string) {
 func (c *HttpClient) DeleteHeader(method, key string) {
 	c.Lock()
 	defer c.Unlock()
-	delete(c.headers[strings.ToUpper(method)], key)
+	delete(c.headers[methodKey(method)], key)
 }
 
 func (c *HttpClient) SetFormValue(method, key, value string) {
 	c.Lock()
 	defer c.Unlock()
-	method = strings.ToUpper(method)
+	method = methodKey(method)
 
 	if _, exists := c.forms[method]; !exists {
 		c.forms[method] = make(map[string]string)
@@ -200,30 +174,29 @@ func (c *HttpClient) SetFormValue(method, key, value string) {
 func (c *HttpClient) DeleteFormValue(method, key string) {
 	c.Lock()
 	defer c.Unlock()
-	delete(c.forms[strings.ToUpper(method)], key)
+	delete(c.forms[methodKey(method)], key)
 }
 
 func (c *HttpClient) GetFormValue(method string) map[string]string {
-	c.Lock()
-	defer c.Unlock()
-	return c.forms[strings.ToUpper(method)]
+	c.RLock()
+	defer c.RUnlock()
+	return cloneStringMap(c.forms[methodKey(method)])
 }
 
 func (c *HttpClient) SetBasicAuth(method, username, password string) {
 	c.Lock()
 	defer c.Unlock()
-	method = strings.ToUpper(method)
+	method = methodKey(method)
 
-	if _, exists := c.basicAuth[method]; !exists {
-		c.basicAuth[method] = make(map[string]string)
+	c.basicAuth[method] = map[string]string{
+		username: password,
 	}
-	c.basicAuth[method][username] = password
 }
 
 func (c *HttpClient) GetBasicAuth(method string) map[string]string {
-	c.Lock()
-	defer c.Unlock()
-	return c.basicAuth[strings.ToUpper(method)]
+	c.RLock()
+	defer c.RUnlock()
+	return cloneStringMap(c.basicAuth[methodKey(method)])
 }
 
 func (c *HttpClient) SetPatchHeader(key, value string) {
@@ -238,7 +211,149 @@ func (c *HttpClient) SetPatchHeader(key, value string) {
 }
 
 func (c *HttpClient) GetHeaders(method string) map[string]string {
-	c.Lock()
-	defer c.Unlock()
-	return c.headers[strings.ToUpper(method)]
+	c.RLock()
+	defer c.RUnlock()
+	return cloneStringMap(c.headers[methodKey(method)])
+}
+
+func (c *HttpClient) formValuesFor(method string) map[string]string {
+	c.RLock()
+	defer c.RUnlock()
+	return cloneStringMap(c.forms[methodKey(method)])
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for k, v := range values {
+		clone[k] = v
+	}
+	return clone
+}
+
+func methodKey(method string) string {
+	return strings.ToUpper(method)
+}
+
+func (c *HttpClient) retriesForMethod(method string) int {
+	if c.params == nil {
+		return 1
+	}
+	key := methodKey(method)
+	if c.params.MethodRetries != nil {
+		if retries, ok := c.params.MethodRetries[key]; ok {
+			return retries
+		}
+		if retries, ok := c.params.MethodRetries[method]; ok {
+			return retries
+		}
+	}
+	return c.params.MaxRetries
+}
+
+func (c *HttpClient) shouldRetryStatus(statusCode int) bool {
+	if c.params == nil || c.params.RetryStatusCodes == nil {
+		return false
+	}
+	_, ok := c.params.RetryStatusCodes[statusCode]
+	return ok
+}
+
+func (c *HttpClient) shouldRetryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return false
+}
+
+func (c *HttpClient) sleepRetry(ctx context.Context) error {
+	if c.params == nil || c.params.MaxRetryWait <= 0 {
+		return nil
+	}
+	wait := time.Second * time.Duration(c.params.MaxRetryWait)
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (c *HttpClient) doRequestWithContextRaw(ctx context.Context, method, addrs string, payload []byte, readBody bool) (*http.Response, []byte, error) {
+	attempts := c.retriesForMethod(method)
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	for attempt := 0; attempt < attempts; attempt++ {
+		req, err := c.buildRequest(ctx, method, addrs, payload)
+		if err != nil {
+			return nil, nil, fmt.Errorf("creating request failed: %w", err)
+		}
+
+		c.setHeaders(method, req)
+		c.setBasicAuth(method, req)
+		c.applyRequestHooks(req)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			if c.shouldRetryError(err) && attempt+1 < attempts {
+				if sleepErr := c.sleepRetry(ctx); sleepErr != nil {
+					return nil, nil, sleepErr
+				}
+				continue
+			}
+			return nil, nil, fmt.Errorf("request failed: %w", err)
+		}
+
+		if resp.StatusCode >= 400 {
+			if c.shouldRetryStatus(resp.StatusCode) && attempt+1 < attempts {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if sleepErr := c.sleepRetry(ctx); sleepErr != nil {
+					return nil, nil, sleepErr
+				}
+				continue
+			}
+			bts, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, nil, fmt.Errorf("http error: status(%d) %s", resp.StatusCode, string(bts))
+		}
+
+		if !readBody {
+			return resp, nil, nil
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading response failed: %w", err)
+		}
+		return resp, body, nil
+	}
+
+	return nil, nil, fmt.Errorf("request failed: exhausted retries")
+}
+
+func (c *HttpClient) applyRequestHooks(req *http.Request) {
+	if c.params == nil || len(c.params.RequestHooks) == 0 {
+		return
+	}
+	for _, hook := range c.params.RequestHooks {
+		if hook == nil {
+			continue
+		}
+		hook(req)
+	}
 }
